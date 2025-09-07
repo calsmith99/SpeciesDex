@@ -1,0 +1,199 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Http;
+
+class SpeciesIdentifyController extends Controller
+{
+    /**
+     * Main method for identifying species from an image
+     *
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function identify(Request $request)
+    {
+        $request->validate([
+            'image' => 'required|image|max:4096',
+        ]);
+        
+        // Step 1: Process the image with Google Cloud Vision API
+        $imageData = base64_encode(file_get_contents($request->file('image')->getRealPath()));
+        $detections = $this->detectImageContent($imageData);
+        
+        if (isset($detections['error'])) {
+            return response()->json($detections, 500);
+        }
+        
+        // Step 2: Get species information for the top result
+        $topResult = !empty($detections) ? $detections[0]['description'] : null;
+        $speciesResults = null;
+        
+        if ($topResult) {
+            $speciesResults = $this->searchSpeciesInformation($topResult);
+        }
+        
+        // Step 3: Return combined results
+        return response()->json([
+            'success' => true,
+            'detections' => $detections,
+            'top_match' => [
+                'label' => $topResult,
+                'species_results' => $speciesResults
+            ]
+        ]);
+    }
+    
+    /**
+     * Process an image with Google Cloud Vision API
+     *
+     * @param string $imageData Base64-encoded image data
+     * @return array Array of detections or error
+     */
+    private function detectImageContent(string $imageData): array
+    {
+        $apiKey = env('GOOGLE_CLOUD_VISION_API_KEY');
+        
+        // Check if API key exists
+        if (!$apiKey) {
+            return ['error' => 'Google Cloud Vision API key not found in environment'];
+        }
+        
+        // Vision API URL
+        $visionUrl = 'https://vision.googleapis.com/v1/images:annotate?key=' . $apiKey;
+        
+        $payload = [
+            'requests' => [[
+                'image' => ['content' => $imageData],
+                'features' => [
+                    ['type' => 'LABEL_DETECTION', 'maxResults' => 20],
+                    ['type' => 'OBJECT_LOCALIZATION', 'maxResults' => 10]
+                ],
+            ]]
+        ];
+        
+        $response = Http::post($visionUrl, $payload);
+        if (!$response->ok()) {
+            return [
+                'error' => 'Vision API error',
+                'details' => $response->json() ?? 'No response details',
+                'status' => $response->status()
+            ];
+        }
+        
+        return $this->processVisionApiResponse($response->json());
+    }
+    
+    /**
+     * Process the raw Vision API response into a clean detection list
+     *
+     * @param array $apiResponseData Raw API response data
+     * @return array Formatted list of detections
+     */
+    private function processVisionApiResponse(array $apiResponseData): array
+    {
+        $apiResponse = $apiResponseData['responses'][0] ?? [];
+        $labels = $apiResponse['labelAnnotations'] ?? [];
+        $objects = $apiResponse['localizedObjectAnnotations'] ?? [];
+        
+        // Combine labels and objects into a single array
+        $allDetections = [];
+        
+        // Add labels
+        foreach ($labels as $label) {
+            $allDetections[] = [
+                'description' => $label['description'],
+                'score' => $label['score'],
+                'mid' => $label['mid'] ?? '',
+                'source' => 'label_detection'
+            ];
+        }
+        
+        // Add objects if they aren't already in the labels
+        foreach ($objects as $object) {
+            $found = false;
+            foreach ($allDetections as $detection) {
+                if (strtolower($detection['description']) === strtolower($object['name'])) {
+                    $found = true;
+                    break;
+                }
+            }
+            
+            if (!$found) {
+                $allDetections[] = [
+                    'description' => $object['name'],
+                    'score' => $object['score'],
+                    'mid' => $object['mid'] ?? '',
+                    'source' => 'object_detection'
+                ];
+            }
+        }
+        
+        // Sort by confidence score (highest first)
+        usort(
+            $allDetections, 
+            function ($a, $b) {
+                return $b['score'] <=> $a['score'];
+            }
+        );
+        
+        return $allDetections;
+    }
+    
+    /**
+     * Search for species information using the GBIF API
+     *
+     * @param string $query The search query (usually a species name)
+     * @return array|null Array of species information or null if not found
+     */
+    private function searchSpeciesInformation(string $query): ?array
+    {
+        $gbifResponse = Http::get(
+            'https://api.gbif.org/v1/species/search',
+            [
+                'q' => $query,
+                'limit' => 5
+            ]
+        );
+        
+        if (!$gbifResponse->ok()) {
+            return null;
+        }
+        
+        $results = $gbifResponse->json()['results'] ?? [];
+        return $this->formatGbifResults($results);
+    }
+    
+    /**
+     * Format GBIF API results into a standardized structure
+     *
+     * @param array $results Raw results from GBIF API
+     * @return array Formatted results
+     */
+    private function formatGbifResults(array $results): array
+    {
+        $formatted = [];
+        
+        foreach ($results as $result) {
+            if (isset($result['scientificName'])) {
+                $formatted[] = [
+                    'scientific_name' => $result['scientificName'],
+                    'taxonomic_status' => $result['taxonomicStatus'] ?? 'unknown',
+                    'rank' => $result['rank'] ?? 'unknown',
+                    'kingdom' => $result['kingdom'] ?? 'unknown',
+                    'phylum' => $result['phylum'] ?? 'unknown',
+                    'class' => $result['class'] ?? 'unknown',
+                    'order' => $result['order'] ?? 'unknown',
+                    'family' => $result['family'] ?? 'unknown',
+                    'genus' => $result['genus'] ?? 'unknown',
+                    'species' => $result['species'] ?? 'unknown',
+                    'gbif_key' => $result['key'] ?? null
+                ];
+            }
+        }
+        
+        return $formatted;
+    }
+}

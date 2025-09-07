@@ -1,0 +1,73 @@
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Dependencies
+/node_modules
+/vendor
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.backup
+.env.production
+
+# Build outputs
+/frontend/build
+/backend/public/build
+/backend/public/hot
+/backend/public/storage
+
+# IDE files
+.vscode/
+.idea/
+.phpactor.json
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# PHP specific
+/backend/storage/*.key
+/backend/storage/pail
+/backend/bootstrap/cache/*
+/backend/storage/framework/cache/*
+/backend/storage/framework/sessions/*
+/backend/storage/framework/views/*
+/backend/storage/logs/*
+!/backend/storage/app/.gitignore
+!/backend/storage/framework/.gitignore
+!/backend/storage/logs/.gitignore
+.phpunit.result.cache
+/.phpunit.cache
+
+# Laravel specific
+Homestead.json
+Homestead.yaml
+auth.json
+/.nova
+/.fleet
+/.zed
+
+# DDEV
+/.ddev/.gitignore
+/.ddev/.homeadditions
+/.ddev/.global_commands
+/.ddev/commands/**/docker-compose.*.yaml
+/.ddev/.dbimageBuild
+/.ddev/db_snapshots/*
+
+# Local database
+/backend/database/database.sqlite

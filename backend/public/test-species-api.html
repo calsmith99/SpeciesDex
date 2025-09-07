@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Species API Test Interface</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .search-section {
+            margin-bottom: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #007bff;
+        }
+        .input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        input[type="text"] {
+            flex: 1;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            font-size: 16px;
+        }
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #007bff;
+            box-shadow: 0 0 0 3px rgba(0,123,255,0.25);
+        }
+        button {
+            padding: 12px 20px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.2s;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        button:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+        }
+        .examples {
+            margin-top: 15px;
+        }
+        .example-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 10px;
+        }
+        .example-btn {
+            padding: 6px 12px;
+            background: #e9ecef;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        .example-btn:hover {
+            background: #dee2e6;
+            border-color: #adb5bd;
+        }
+        .loading {
+            color: #007bff;
+            font-style: italic;
+        }
+        .results {
+            margin-top: 20px;
+        }
+        .success {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            border-radius: 6px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        .error {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            border-radius: 6px;
+            padding: 15px;
+            margin-bottom: 20px;
+            color: #721c24;
+        }
+        .species-card {
+            background: white;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 15px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .species-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        .species-image {
+            width: 80px;
+            height: 80px;
+            object-fit: cover;
+            border-radius: 8px;
+            margin-right: 15px;
+            border: 2px solid #e9ecef;
+        }
+        .species-info h3 {
+            margin: 0 0 5px 0;
+            color: #2c3e50;
+            font-size: 1.3em;
+        }
+        .species-info p {
+            margin: 0;
+            color: #6c757d;
+            font-style: italic;
+        }
+        .taxonomy-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+            margin-top: 15px;
+        }
+        .taxonomy-item {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            border-left: 3px solid #007bff;
+        }
+        .taxonomy-label {
+            font-weight: bold;
+            color: #495057;
+            font-size: 0.9em;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .taxonomy-value {
+            color: #2c3e50;
+            margin-top: 2px;
+            font-size: 1em;
+        }
+        .unknown {
+            color: #6c757d;
+            font-style: italic;
+        }
+        .response-time {
+            font-size: 0.9em;
+            color: #6c757d;
+            margin-top: 10px;
+        }
+        .stats {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #e9ecef;
+        }
+        .test-log {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 6px;
+            padding: 15px;
+            margin-top: 20px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+        .log-entry {
+            margin-bottom: 5px;
+            padding: 2px 0;
+        }
+        .log-time {
+            color: #6c757d;
+            margin-right: 10px;
+        }
+        .log-info {
+            color: #007bff;
+        }
+        .log-error {
+            color: #dc3545;
+        }
+        .log-success {
+            color: #28a745;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🐦 Species API Test Interface</h1>
+        <p style="text-align: center; color: #6c757d; margin-bottom: 30px;">
+            Test the enhanced species identification API with common names and scientific names
+        </p>
+        
+        <div class="search-section">
+            <h3>🔍 Species Search</h3>
+            <div class="input-group">
+                <input type="text" id="speciesInput" placeholder="Enter species name (e.g., 'American Robin' or 'Turdus migratorius')" />
+                <button onclick="searchSpecies()" id="searchBtn">Search</button>
+            </div>
+            
+            <div class="examples">
+                <strong>Try these examples:</strong>
+                <div class="example-buttons">
+                    <span class="example-btn" onclick="setExample('American Robin')">American Robin</span>
+                    <span class="example-btn" onclick="setExample('blue jay')">Blue Jay</span>
+                    <span class="example-btn" onclick="setExample('Northern Cardinal')">Northern Cardinal</span>
+                    <span class="example-btn" onclick="setExample('Eurasian Magpie')">Eurasian Magpie</span>
+                    <span class="example-btn" onclick="setExample('Pica pica')">Pica pica</span>
+                    <span class="example-btn" onclick="setExample('Turdus migratorius')">Turdus migratorius</span>
+                    <span class="example-btn" onclick="setExample('house sparrow')">House Sparrow</span>
+                    <span class="example-btn" onclick="setExample('red-tailed hawk')">Red-tailed Hawk</span>
+                    <span class="example-btn" onclick="setExample('Corvus brachyrhynchos')">American Crow (scientific)</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="results" id="results"></div>
+        
+        <div class="test-log" id="testLog" style="display: none;">
+            <h4>🔍 API Test Log</h4>
+            <div id="logEntries"></div>
+        </div>
+    </div>
+
+    <script>
+        let testCounter = 0;
+        
+        function addLogEntry(message, type = 'info') {
+            const logContainer = document.getElementById('logEntries');
+            const testLog = document.getElementById('testLog');
+            testLog.style.display = 'block';
+            
+            const timestamp = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type}`;
+            entry.innerHTML = `<span class="log-time">[${timestamp}]</span>${message}`;
+            
+            logContainer.appendChild(entry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+        
+        function setExample(species) {
+            document.getElementById('speciesInput').value = species;
+        }
+        
+        async function searchSpecies() {
+            const input = document.getElementById('speciesInput');
+            const button = document.getElementById('searchBtn');
+            const results = document.getElementById('results');
+            
+            const speciesName = input.value.trim();
+            if (!speciesName) {
+                alert('Please enter a species name');
+                return;
+            }
+            
+            testCounter++;
+            const startTime = Date.now();
+            
+            // Update UI
+            button.disabled = true;
+            button.textContent = 'Searching...';
+            results.innerHTML = '<div class="loading">🔍 Searching for species data...</div>';
+            
+            addLogEntry(`Test #${testCounter}: Searching for "${speciesName}"`, 'info');
+            
+            try {
+                const response = await fetch('/api/species-details', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        species_name: speciesName
+                    })
+                });
+                
+                const endTime = Date.now();
+                const responseTime = endTime - startTime;
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    addLogEntry(`✅ Success! Found ${data.species_results?.length || 0} result(s) in ${responseTime}ms`, 'success');
+                    displayResults(data, responseTime);
+                } else {
+                    addLogEntry(`❌ API Error: ${data.message || 'Unknown error'}`, 'error');
+                    displayError(data.message || 'Unknown error occurred');
+                }
+            } catch (error) {
+                const endTime = Date.now();
+                const responseTime = endTime - startTime;
+                addLogEntry(`💥 Network Error: ${error.message} (${responseTime}ms)`, 'error');
+                displayError(`Network error: ${error.message}`);
+            } finally {
+                button.disabled = false;
+                button.textContent = 'Search';
+            }
+        }
+        
+        function displayResults(data, responseTime) {
+            const results = document.getElementById('results');
+            
+            if (!data.success || !data.species_results || data.species_results.length === 0) {
+                displayError(data.message || 'No species found');
+                return;
+            }
+            
+            let html = `
+                <div class="success">
+                    ✅ <strong>Search successful!</strong> Found ${data.species_results.length} result(s) for "${data.species_name}"
+                    <div class="response-time">Response time: ${responseTime}ms</div>
+                </div>
+            `;
+            
+            data.species_results.forEach((species, index) => {
+                const imageHtml = species.reference_image 
+                    ? `<img src="${species.reference_image}" alt="${species.scientific_name}" class="species-image" onerror="this.style.display='none'">` 
+                    : '<div class="species-image" style="background: #e9ecef; display: flex; align-items: center; justify-content: center; color: #6c757d; font-size: 0.8em;">No Image</div>';
+                
+                html += `
+                    <div class="species-card">
+                        <div class="species-header">
+                            ${imageHtml}
+                            <div class="species-info">
+                                <h3>${species.scientific_name}</h3>
+                                ${species.preferred_common_name ? `<p><strong>Common Name:</strong> ${species.preferred_common_name}</p>` : ''}
+                                <p>Taxonomic Status: ${species.taxonomic_status} • Rank: ${species.rank}</p>
+                                <p>GBIF Key: ${species.gbif_key}</p>
+                            </div>
+                        </div>
+                        
+                        <div class="taxonomy-grid">
+                            ${createTaxonomyItem('Domain', species.domain)}
+                            ${createTaxonomyItem('Kingdom', species.kingdom)}
+                            ${createTaxonomyItem('Phylum', species.phylum)}
+                            ${createTaxonomyItem('Class', species.class)}
+                            ${createTaxonomyItem('Order', species.order)}
+                            ${createTaxonomyItem('Family', species.family)}
+                            ${createTaxonomyItem('Genus', species.genus)}
+                            ${createTaxonomyItem('Species', species.species)}
+                        </div>
+                        
+                        <div class="stats">
+                            <span>🔗 <strong>GBIF ID:</strong> ${species.gbif_key}</span>
+                            ${species.reference_image ? `<span>📸 <strong>Image:</strong> Available</span>` : '<span>📸 <strong>Image:</strong> Not available</span>'}
+                        </div>
+                    </div>
+                `;
+            });
+            
+            results.innerHTML = html;
+        }
+        
+        function createTaxonomyItem(label, value) {
+            const displayValue = value && value !== 'unknown' && value !== 'null' ? value : 'Unknown';
+            const cssClass = displayValue === 'Unknown' ? 'unknown' : '';
+            
+            return `
+                <div class="taxonomy-item">
+                    <div class="taxonomy-label">${label}</div>
+                    <div class="taxonomy-value ${cssClass}">${displayValue}</div>
+                </div>
+            `;
+        }
+        
+        function displayError(message) {
+            const results = document.getElementById('results');
+            results.innerHTML = `
+                <div class="error">
+                    ❌ <strong>Error:</strong> ${message}
+                </div>
+            `;
+        }
+        
+        // Allow Enter key to trigger search
+        document.getElementById('speciesInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                searchSpecies();
+            }
+        });
+        
+        // Initialize log
+        addLogEntry('Species API Test Interface initialized', 'info');
+    </script>
+</body>
+</html>
