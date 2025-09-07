@@ -324,11 +324,29 @@ function App() {
       // Get current taxonomy data from existing tree
       const existingTaxonomy = getExistingTaxonomyData();
       
-      // Try to get usageKeys for each layer from s and higherClassificationMap
+      // Try to get usageKeys for each layer from the backend parent_keys
       const getLayer = (field, fallback) => {
-        let value = s[field] || (s.higherClassificationMap && Object.values(s.higherClassificationMap).find(v => v === fallback)) || null;
-        let key = s[field + 'Key'] || (s.higherClassificationMap && Object.keys(s.higherClassificationMap).find(k => s.higherClassificationMap[k] === value));
-        return { value: value ? capitalize(value) : value, usageKey: key ? parseInt(key) : undefined };
+        let value = s[field] || fallback || null;
+        let key = undefined;
+        
+        // Use parent_keys from backend if available
+        if (s.parent_keys && s.parent_keys[field]) {
+          key = parseInt(s.parent_keys[field]);
+        } else if (s[field + 'Key']) {
+          key = parseInt(s[field + 'Key']);
+        } else if (s.higherClassificationMap) {
+          // Fallback to old method if parent_keys not available
+          const mapValue = Object.values(s.higherClassificationMap).find(v => v === value);
+          if (mapValue) {
+            const mapKey = Object.keys(s.higherClassificationMap).find(k => s.higherClassificationMap[k] === mapValue);
+            key = mapKey ? parseInt(mapKey) : undefined;
+          }
+        }
+        
+        return { 
+          value: value ? capitalize(value) : value, 
+          usageKey: key 
+        };
       };
 
       // Define the taxonomic hierarchy
@@ -436,27 +454,110 @@ function App() {
       }
       return (
         <g>
-          <rect x={-60} y={-40} width={120} height={80} rx={40} fill="#e0f7fa" stroke="#0097a7" strokeWidth={3} />
-          {/* Main label: common name or scientific name if no common */}
-          <text fill="#00796b" stroke="none" x={0} y={0} textAnchor="middle" fontWeight="bold" fontSize="16">
-            {commonName || sciName}
-          </text>
-          {/* Smaller: scientific name if common name exists */}
-          {commonName && (
-            <text fill="#0097a7" stroke="none" x={0} y={20} textAnchor="middle" fontSize="12" fontStyle="italic">
-              {sciName}
-            </text>
-          )}
-          {/* Node type label (Kingdom, Family, etc.) */}
-          <text fill="#0097a7" stroke="none" x={0} y={34} textAnchor="middle" fontSize="11">
-            {nodeDatum.attributes && nodeDatum.attributes.label}
-          </text>
-          {/* Child completion count from API */}
-          {totalChildren !== undefined && (
-            <text fill="#ff9800" stroke="none" x={0} y={-28} textAnchor="middle" fontSize="11">
-              {foundChildren}/{totalChildren} found
-            </text>
-          )}
+          {(() => {
+            // Calculate dynamic dimensions based on content
+            const label = nodeDatum.attributes && nodeDatum.attributes.label;
+            
+            // Calculate text width (rough estimation)
+            const mainText = commonName || sciName;
+            const subText = commonName ? sciName : '';
+            const labelText = label || '';
+            
+            // Estimate text widths (approximate 8px per character for main text, 6px for smaller text)
+            const mainTextWidth = mainText.length * 8;
+            const subTextWidth = subText.length * 6;
+            const labelTextWidth = labelText.length * 5.5;
+            
+            // Calculate required width with padding
+            const maxTextWidth = Math.max(mainTextWidth, subTextWidth, labelTextWidth);
+            const nodeWidth = Math.max(140, maxTextWidth + 40); // Minimum 140px, or text width + padding
+            const nodeHeight = 80;
+            
+            // Determine if this should be green (species always green, or complete non-species nodes)
+            const isSpecies = label && label.toLowerCase() === 'species';
+            const isComplete = totalChildren !== undefined && foundChildren >= totalChildren;
+            const shouldBeGreen = isSpecies || (!isSpecies && isComplete);
+            
+            // Color scheme
+            const colors = shouldBeGreen ? {
+              bg: '#e8f5e8',      // Light green background
+              stroke: '#4caf50',   // Green stroke
+              text: '#2e7d32',     // Dark green text
+              subtext: '#4caf50',  // Medium green subtext
+              count: '#ff9800'     // Orange count (unchanged)
+            } : {
+              bg: '#e0f7fa',       // Light blue background (original)
+              stroke: '#0097a7',   // Blue stroke (original)
+              text: '#00796b',     // Dark teal text (original)
+              subtext: '#0097a7',  // Blue subtext (original)
+              count: '#ff9800'     // Orange count (unchanged)
+            };
+            
+            return (
+              <>
+                <rect 
+                  x={-nodeWidth/2} 
+                  y={-nodeHeight/2} 
+                  width={nodeWidth} 
+                  height={nodeHeight} 
+                  rx={40} 
+                  fill={colors.bg} 
+                  stroke={colors.stroke} 
+                  strokeWidth={3} 
+                />
+                {/* Main label: common name or scientific name if no common */}
+                <text 
+                  fill={colors.text} 
+                  stroke="none" 
+                  x={0} 
+                  y={0} 
+                  textAnchor="middle" 
+                  fontWeight="bold" 
+                  fontSize="16"
+                >
+                  {mainText}
+                </text>
+                {/* Smaller: scientific name if common name exists */}
+                {commonName && (
+                  <text 
+                    fill={colors.subtext} 
+                    stroke="none" 
+                    x={0} 
+                    y={20} 
+                    textAnchor="middle" 
+                    fontSize="12" 
+                    fontStyle="italic"
+                  >
+                    {sciName}
+                  </text>
+                )}
+                {/* Node type label (Kingdom, Family, etc.) */}
+                <text 
+                  fill={colors.subtext} 
+                  stroke="none" 
+                  x={0} 
+                  y={34} 
+                  textAnchor="middle" 
+                  fontSize="11"
+                >
+                  {label}
+                </text>
+                {/* Child completion count from API - not shown for species */}
+                {!isSpecies && (
+                  <text 
+                    fill={colors.count} 
+                    stroke="none" 
+                    x={0} 
+                    y={-28} 
+                    textAnchor="middle" 
+                    fontSize="11"
+                  >
+                    {totalChildren !== undefined && totalChildren > 0 ? `${foundChildren}/${totalChildren} found` : `${foundChildren}/? found`}
+                  </text>
+                )}
+              </>
+            );
+          })()}
         </g>
       );
     };
@@ -465,11 +566,13 @@ function App() {
         <Tree
           data={treeData}
           orientation="horizontal"
-          translate={{ x: 100, y: 300 }}
+          translate={{ x: 150, y: 300 }}
           renderCustomNodeElement={renderCustomNode}
           pathFunc="elbow"
           zoomable={true}
           collapsible={false}
+          separation={{ siblings: 3, nonSiblings: 3 }}
+          nodeSize={{ x: 300, y: 150 }}
         />
       </div>
     );

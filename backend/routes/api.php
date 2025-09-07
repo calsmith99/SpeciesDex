@@ -25,6 +25,9 @@ Route::middleware(['auth:sanctum'])->get('/user',
 // Species identification endpoint
 Route::post('/identify-species', [SpeciesIdentifyController::class, 'identify']);
 
+// Alternative GET endpoint for easy testing
+Route::get('/species/identify', [SpeciesIdentifyController::class, 'identify']);
+
 // Get detailed species information for a selected species
 Route::post('/species-details', [SpeciesIdentifyController::class, 'getSpeciesDetails']);
 

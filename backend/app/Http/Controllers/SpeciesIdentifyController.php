@@ -23,7 +23,7 @@ class SpeciesIdentifyController extends Controller
     private $speciesCache = [];
 
     /**
-     * Main method for identifying species from an image
+     * Main method for identifying species from an image or name
      *
      * @param Request $request
      * @return \Illuminate\Http\JsonResponse
@@ -32,6 +32,12 @@ class SpeciesIdentifyController extends Controller
     {
         Log::info('=== SPECIES IDENTIFICATION STARTED ===');
         
+        // Check if this is a name-based search (GET request with name parameter)
+        if ($request->isMethod('get') && $request->has('name')) {
+            return $this->identifyByName($request);
+        }
+        
+        // Otherwise, handle image-based identification
         $request->validate(
             [
                 'image' => 'required|image|max:4096',
@@ -78,6 +84,46 @@ class SpeciesIdentifyController extends Controller
                 'success' => true,
                 'detections' => $detections,
                 'species_options' => $speciesOptions
+            ]
+        );
+    }
+
+    /**
+     * Handle name-based species identification
+     *
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    private function identifyByName(Request $request)
+    {
+        $speciesName = $request->input('name');
+        
+        Log::info("Name-based species identification for: {$speciesName}");
+        
+        // Use the enhanced search method to get complete species data
+        $speciesResults = $this->_searchSpeciesWithCanonicalNameLookup($speciesName);
+        
+        if (!$speciesResults) {
+            Log::warning("No species results found for: {$speciesName}");
+            return response()->json(
+                [
+                    'success' => false,
+                    'message' => 'No species information found'
+                ],
+                404
+            );
+        }
+
+        Log::info('Name-based species identification completed', [
+            'species_name' => $speciesName,
+            'results_count' => count($speciesResults)
+        ]);
+
+        return response()->json(
+            [
+                'success' => true,
+                'species_name' => $speciesName,
+                'species_results' => $speciesResults
             ]
         );
     }
@@ -1085,7 +1131,8 @@ class SpeciesIdentifyController extends Controller
                     'preferred_common_name' => $this->_extractPreferredCommonName($resolvedData, $result),
                     'reference_image' => null,
                     'image_source' => null,
-                    'synonym_of' => ($taxonomicStatus !== 'ACCEPTED' && isset($acceptedData)) ? $result['scientificName'] : null
+                    'synonym_of' => ($taxonomicStatus !== 'ACCEPTED' && isset($acceptedData)) ? $result['scientificName'] : null,
+                    'parent_keys' => $this->_fetchParentTaxonomicKeys($resolvedData, $result)
                 ];
                 
                 // Create a normalized species identifier for deduplication
@@ -1177,6 +1224,325 @@ class SpeciesIdentifyController extends Controller
         
         // If no match, just return the original name normalized
         return strtolower(trim($scientificName));
+    }
+
+    /**
+     * Fetch GBIF usage keys for parent taxonomic levels
+     *
+     * @param array $resolvedData Resolved species data
+     * @param array $result Original GBIF result
+     * @return array Mapping of taxonomic levels to their GBIF usage keys
+     */
+    private function _fetchParentTaxonomicKeys(array $resolvedData, array $result): array
+    {
+        $parentKeys = [];
+        // Prioritize the resolved data key (accepted name) over original result key
+        $gbifKey = $resolvedData['key'] ?? $result['key'] ?? null;
+        
+        if (!$gbifKey) {
+            Log::debug("No GBIF key available for parent key lookup");
+            return $parentKeys;
+        }
+
+        Log::info("Fetching complete parent taxonomic hierarchy", ['gbif_key' => $gbifKey]);
+        
+        try {
+            // Get the complete species details from GBIF using the accepted key
+            $speciesResponse = Http::timeout(5)->get("https://api.gbif.org/v1/species/{$gbifKey}");
+            
+            if (!$speciesResponse->ok()) {
+                Log::warning("Failed to fetch species details for parent key lookup", [
+                    'gbif_key' => $gbifKey,
+                    'status' => $speciesResponse->status()
+                ]);
+                return $parentKeys;
+            }
+            
+            $speciesData = $speciesResponse->json();
+            
+            // Extract parent keys directly from the species response
+            $taxonomicLevels = ['kingdomKey', 'phylumKey', 'classKey', 'orderKey', 'familyKey', 'genusKey', 'speciesKey'];
+            foreach ($taxonomicLevels as $levelKey) {
+                if (isset($speciesData[$levelKey])) {
+                    // Convert kingdomKey -> kingdom, phylumKey -> phylum, etc.
+                    $level = strtolower(str_replace('Key', '', $levelKey));
+                    $parentKeys[$level] = $speciesData[$levelKey];
+                    Log::debug("Found {$level} key: {$speciesData[$levelKey]}");
+                }
+            }
+            
+            // Add the species' own key if not already present
+            if (!isset($parentKeys['species']) && isset($speciesData['key'])) {
+                $parentKeys['species'] = $speciesData['key'];
+                Log::debug("Added species key: {$speciesData['key']}");
+            }            // If we don't have all the keys, try to trace up the hierarchy
+            if (count($parentKeys) < 7) {
+                $this->_traceParentHierarchy($parentKeys, $gbifKey);
+            }
+            
+            // Add missing domain key using fallback search
+            if (!isset($parentKeys['domain'])) {
+                $domainKey = $this->_getDomainKey($resolvedData, $result);
+                if ($domainKey) {
+                    $parentKeys['domain'] = $domainKey;
+                } else {
+                    // Use a hardcoded Eukaryota key as fallback since most species are eukaryotic
+                    $parentKeys['domain'] = 165533616; // Known GBIF key for Eukaryota
+                    Log::debug("Using hardcoded Eukaryota domain key as fallback");
+                }
+            }
+            
+            // Add fallbacks for any other missing keys
+            $parentKeys = $this->_addMissingTaxonomicKeys($parentKeys, $resolvedData, $result);
+
+            Log::info("Parent keys lookup completed", [
+                'gbif_key' => $gbifKey,
+                'parent_keys_found' => count($parentKeys),
+                'parent_keys' => $parentKeys
+            ]);
+            
+        } catch (\Exception $e) {
+            Log::error("Exception fetching parent taxonomic keys", [
+                'gbif_key' => $gbifKey,
+                'error' => $e->getMessage()
+            ]);
+            
+            // If it's an SSL error, try the fallback method
+            if (strpos($e->getMessage(), 'SSL') !== false || strpos($e->getMessage(), 'cURL') !== false) {
+                Log::info("Attempting fallback parent key extraction due to SSL/cURL error");
+                return $this->_getBasicParentKeys($gbifKey);
+            }
+        }
+        
+        return $parentKeys;
+    }
+
+    /**
+     * Trace up the taxonomic hierarchy to get missing parent keys
+     *
+     * @param array &$parentKeys Reference to the parent keys array to populate
+     * @param int $currentKey The current GBIF key to start tracing from
+     * @return void
+     */
+    private function _traceParentHierarchy(array &$parentKeys, int $currentKey): void
+    {
+        $visited = [$currentKey]; // Prevent infinite loops
+        $currentGbifKey = $currentKey;
+        
+        Log::debug("Starting parent hierarchy trace", ['starting_key' => $currentKey]);
+        
+        // Trace up the hierarchy until we reach the root or have all levels
+        while ($currentGbifKey && count($parentKeys) < 6 && count($visited) < 10) {
+            try {
+                $response = Http::timeout(3)->get("https://api.gbif.org/v1/species/{$currentGbifKey}");
+                
+                if (!$response->ok()) {
+                    Log::debug("Failed to fetch details for key {$currentGbifKey}");
+                    break;
+                }
+                
+                $data = $response->json();
+                
+                // Add this level's parent keys if they exist
+                $levelMap = [
+                    'kingdomKey' => 'kingdom',
+                    'phylumKey' => 'phylum', 
+                    'classKey' => 'class',
+                    'orderKey' => 'order',
+                    'familyKey' => 'family',
+                    'genusKey' => 'genus'
+                ];
+                
+                foreach ($levelMap as $gbifField => $level) {
+                    if (isset($data[$gbifField]) && !isset($parentKeys[$level])) {
+                        $parentKeys[$level] = $data[$gbifField];
+                        Log::debug("Traced {$level} key: {$data[$gbifField]}");
+                    }
+                }
+                
+                // Move up to the parent
+                $parentKey = $data['parentKey'] ?? null;
+                if ($parentKey && !in_array($parentKey, $visited)) {
+                    $visited[] = $parentKey;
+                    $currentGbifKey = $parentKey;
+                } else {
+                    break; // No parent or already visited
+                }
+                
+            } catch (\Exception $e) {
+                Log::debug("Exception tracing parent for key {$currentGbifKey}: {$e->getMessage()}");
+                break;
+            }
+        }
+        
+        Log::debug("Parent hierarchy trace completed", [
+            'visited_keys' => $visited,
+            'final_parent_keys' => $parentKeys
+        ]);
+    }
+
+    /**
+     * Get basic parent keys as a fallback when full hierarchy tracing fails
+     *
+     * @param int $gbifKey The GBIF species key
+     * @return array Basic parent keys extracted from species data
+     */
+    private function _getBasicParentKeys(int $gbifKey): array
+    {
+        try {
+            // Try a simpler approach with no SSL verification if needed
+            $response = Http::timeout(10)->withOptions([
+                'verify' => false // Disable SSL verification as fallback
+            ])->get("https://api.gbif.org/v1/species/{$gbifKey}");
+            
+            if ($response->ok()) {
+                $data = $response->json();
+                $parentKeys = [];
+                
+                // Extract basic parent keys
+                $keyMap = [
+                    'kingdomKey' => 'kingdom',
+                    'phylumKey' => 'phylum', 
+                    'classKey' => 'class',
+                    'orderKey' => 'order',
+                    'familyKey' => 'family',
+                    'genusKey' => 'genus',
+                    'speciesKey' => 'species'
+                ];
+                
+                foreach ($keyMap as $sourceKey => $targetKey) {
+                    if (isset($data[$sourceKey])) {
+                        $parentKeys[$targetKey] = $data[$sourceKey];
+                    }
+                }
+                
+                // Add the species' own key if not present
+                if (!isset($parentKeys['species']) && isset($data['key'])) {
+                    $parentKeys['species'] = $data['key'];
+                }
+                
+                Log::info("Fallback parent keys extracted", [
+                    'gbif_key' => $gbifKey,
+                    'parent_keys' => $parentKeys
+                ]);
+                
+                return $parentKeys;
+            }
+        } catch (\Exception $e) {
+            Log::warning("Fallback parent key extraction also failed", [
+                'gbif_key' => $gbifKey,
+                'error' => $e->getMessage()
+            ]);
+        }
+        
+        return [];
+    }
+
+    /**
+     * Get domain key by searching for domain name
+     *
+     * @param array $resolvedData Resolved species data
+     * @param array $result Original search result
+     * @return int|null Domain usage key or null if not found
+     */
+    private function _getDomainKey(array $resolvedData, array $result): ?int
+    {
+        $domainName = $resolvedData['domain'] ?? $result['domain'] ?? 'Eukaryota';
+        
+        try {
+            $response = Http::timeout(5)->withOptions([
+                'verify' => false // Disable SSL verification for Docker environment
+            ])->get('https://api.gbif.org/v1/species/search', [
+                'q' => $domainName,
+                'rank' => 'DOMAIN',
+                'limit' => 1
+            ]);
+            
+            if ($response->ok()) {
+                $results = $response->json()['results'] ?? [];
+                if (!empty($results)) {
+                    $firstResult = $results[0];
+                    if (isset($firstResult['key']) && 
+                        strtolower($firstResult['canonicalName'] ?? '') === strtolower($domainName)) {
+                        Log::debug("Found domain key for {$domainName}: {$firstResult['key']}");
+                        return $firstResult['key'];
+                    }
+                }
+            }
+        } catch (\Exception $e) {
+            Log::debug("Error searching for domain key: {$e->getMessage()}");
+        }
+        
+        return null;
+    }
+
+    /**
+     * Add missing taxonomic keys by searching GBIF
+     *
+     * @param array $parentKeys Current parent keys
+     * @param array $resolvedData Resolved species data  
+     * @param array $result Original search result
+     * @return array Enhanced parent keys with missing keys filled in
+     */
+    private function _addMissingTaxonomicKeys(array $parentKeys, array $resolvedData, array $result): array
+    {
+        $expectedLevels = ['domain', 'kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species'];
+        
+        foreach ($expectedLevels as $level) {
+            if (!isset($parentKeys[$level])) {
+                $key = $this->_searchForTaxonomicKey($level, $resolvedData, $result);
+                if ($key) {
+                    $parentKeys[$level] = $key;
+                    Log::debug("Added missing {$level} key: {$key}");
+                }
+            }
+        }
+        
+        return $parentKeys;
+    }
+
+    /**
+     * Search for a specific taxonomic key
+     *
+     * @param string $level Taxonomic level (kingdom, phylum, etc.)
+     * @param array $resolvedData Resolved species data
+     * @param array $result Original search result
+     * @return int|null Usage key or null if not found
+     */
+    private function _searchForTaxonomicKey(string $level, array $resolvedData, array $result): ?int
+    {
+        $taxonomicName = $resolvedData[$level] ?? $result[$level] ?? null;
+        
+        if (!$taxonomicName) {
+            return null;
+        }
+        
+        try {
+            $response = Http::timeout(3)->withOptions([
+                'verify' => false // Disable SSL verification for Docker environment
+            ])->get('https://api.gbif.org/v1/species/search', [
+                'q' => $taxonomicName,
+                'rank' => strtoupper($level),
+                'limit' => 1
+            ]);
+            
+            if ($response->ok()) {
+                $results = $response->json()['results'] ?? [];
+                if (!empty($results)) {
+                    $firstResult = $results[0];
+                    if (isset($firstResult['key']) && 
+                        isset($firstResult['rank']) &&
+                        strtolower($firstResult['rank']) === $level &&
+                        strtolower($firstResult['canonicalName'] ?? '') === strtolower($taxonomicName)) {
+                        return $firstResult['key'];
+                    }
+                }
+            }
+        } catch (\Exception $e) {
+            Log::debug("Error searching for {$level} key: {$e->getMessage()}");
+        }
+        
+        return null;
     }
 
     /**
